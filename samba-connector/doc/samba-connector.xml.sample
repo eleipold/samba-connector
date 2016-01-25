@@ -1,0 +1,3 @@
+<!-- BEGIN_INCLUDE(samba:receive) -->
+    <samba:receive config-ref="" path="" />
+<!-- END_INCLUDE(samba:receive) -->

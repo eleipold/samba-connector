@@ -13,6 +13,7 @@ public class ConnectorConfig {
     private String domain;
 
     @Configurable
+    @Optional
     private String host;
 
     @Configurable

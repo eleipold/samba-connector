@@ -2,24 +2,32 @@ package org.mule.modules.samba;
 
 import java.io.IOException;
 import java.net.MalformedURLException;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import jcifs.smb.NtlmPasswordAuthentication;
 import jcifs.smb.SmbAuthException;
 import jcifs.smb.SmbException;
 import jcifs.smb.SmbFile;
 import jcifs.smb.SmbFileInputStream;
+import jcifs.smb.SmbFileOutputStream;
 
 import org.apache.commons.io.IOUtils;
+import org.mule.api.DefaultMuleException;
 import org.mule.api.annotations.Config;
 import org.mule.api.annotations.Connector;
 import org.mule.api.annotations.Processor;
 import org.mule.api.annotations.Source;
 import org.mule.api.annotations.SourceStrategy;
 import org.mule.api.annotations.param.Optional;
+import org.mule.api.annotations.param.Payload;
 import org.mule.modules.samba.config.ConnectorConfig;
+import org.mule.transformer.simple.ObjectToByteArray;
 import org.mule.api.callback.SourceCallback;
+import org.mule.api.transformer.TransformerException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,19 +72,27 @@ public class SambaConnector {
     }
 
     @Processor
-    public List<byte[]> get(@Optional final String host, final String path, @Optional final String wildcardPattern) {
-        List<byte[]> files = new ArrayList<>();
+    public List<SambaFile> get(@Optional final String host, final String path, @Optional final String wildcardPattern) {
+        List<SambaFile> files = new ArrayList<>();
         String url = this.getUrl(host, path);
         logger.debug("Connecting to Samba share: " + url.toString());
         NtlmPasswordAuthentication auth = this.getAuth();
         try {
             SmbFile resource = new SmbFile(url.toString(), auth);
             if (resource.isFile()) {
-                files.add(this.getContents(resource));
+                SambaFile sambaFile = new SambaFile();
+                logger.debug("Setting filename to resource: " + resource.getName());
+                sambaFile.setFilename(resource.getName());
+                sambaFile.setContent(this.getContents(resource));
+                files.add(sambaFile);
             } else if (resource.list().length > 0) {
                 SmbFile[] file = wildcardPattern == null ? resource.listFiles() : resource.listFiles(wildcardPattern);
                 for (int i = 0; i < file.length; i++) {
-                    files.add(this.getContents(file[i]));
+                    SambaFile sambaFile = new SambaFile();
+                    logger.debug("Setting filename to file: " + file[i].getName());
+                    sambaFile.setFilename(file[i].getName());
+                    sambaFile.setContent(this.getContents(file[i]));
+                    files.add(sambaFile);
                 }
             } else {
                 logger.debug("No files to process for " + url.toString());
@@ -101,6 +117,41 @@ public class SambaConnector {
         return files;
     }
 
+    @Processor
+    public void put(@Optional final String host, final String path, @Optional final String filename, @Payload Object payload) throws DefaultMuleException {
+        String url = this.getUrl(host, path);
+        logger.debug("Connecting to Samba share: " + url.toString());
+        NtlmPasswordAuthentication auth = this.getAuth();
+        SmbFile resource;
+        SmbFileOutputStream out;
+        try {
+            resource = new SmbFile(url.toString(), auth);
+            if (resource.isDirectory()) {
+                out = new SmbFileOutputStream(new SmbFile(url.toString() + "/" + filename, auth));
+                out.write((byte[])new ObjectToByteArray().transform(payload));
+                out.flush();
+                out.close();
+            } else {
+                throw new DefaultMuleException("Attempting to write to a resource that is not a directory: " + resource.getCanonicalPath());
+            }
+        } catch (MalformedURLException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        } catch (SmbException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        } catch (UnknownHostException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        } catch (TransformerException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+    }
+    
     private byte[] getContents(SmbFile file) {
         byte[] contents;
         try {
@@ -123,7 +174,10 @@ public class SambaConnector {
     private void processFile(SmbFile file, SourceCallback sourceCallback) throws SmbException {
         try {
             SmbFileInputStream inFile = new SmbFileInputStream(file);
-            sourceCallback.process(IOUtils.toString(inFile));
+            Map<String, Object> inboundProperties = new HashMap<String, Object>();
+            logger.debug("Setting originalFilename to: " + file.getName());
+            inboundProperties.put("originalFilename", file.getName());
+            sourceCallback.process(IOUtils.toString(inFile), inboundProperties);
             inFile.close();
             file.delete();
         } catch (IOException e) {
